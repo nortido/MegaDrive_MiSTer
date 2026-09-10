@@ -2619,7 +2619,9 @@ end
 	wire ss_step54_dff12;
 	ym7101_dff dff12(.MCLK(MCLK), .clk(w37), .inp(1'h1), .rst(w10), .outp(dff12_l2), .ss_en(ss_en), .ss_in(ss_step53_dff11), .ss_out(ss_step54_dff12));
 	
-	assign w38 = dff12_l2 | reset_comb;
+	// dff12_l2 is constant zero: it and dff13 reset each other, and that loop
+	// cost two ns on most of the worst paths
+	assign w38 = reset_comb;
 	
 	wire ss_step55_dff13;
 	ym7101_dff dff13(.MCLK(MCLK), .clk(w34), .inp(w44), .rst(w38), .outp(dff13_l2), .ss_en(ss_en), .ss_in(ss_step54_dff12), .ss_out(ss_step55_dff13));
