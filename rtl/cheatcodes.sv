@@ -83,20 +83,42 @@ always_ff @(posedge clk) begin
 	end
 end
 
-// The lookup walks the table and lets every match overwrite what the previous
-// one wrote, so the highest numbered code wins. Written as one walk over all
-// thirty two, that is thirty two multiplexers in series behind an address
-// compare each, and it lands on the registers that latch the CPU buses: it was
-// the endpoint of the worst path in every fitter report taken on this core.
-// Splitting the walk into four independent runs and merging those in order
-// keeps the result identical, because a later run still overwrites an earlier
-// one, but the depth becomes eight plus four instead of thirty two.
+// Each code's match is registered and drives the merge, so the lookup and the
+// merge sit in different cycles and the bus word reaches the register latching
+// data_out through one multiplexer. The decision lags the bus by a clock, which
+// a CPU never sees: it holds an address for many clocks before it samples the
+// data. A clock that writes the table clears every match, so no match found in
+// the old table is merged with the new one; a new code acts a clock later.
+logic [MAX_CODES-1:0] hit;
+wire table_wr = reset | (code[128] & ~code_change & (found_dup | (next_index < MAX_CODES)));
+
+always_ff @(posedge clk) begin
+	int x;
+	logic wide, upper;
+
+	for (x = 0; x < MAX_CODES; x = x + 1) begin
+		wide  = (DATA_WIDTH == 8) || !codes[x][CODE_WIDTH];
+		upper = codes[x][ADDR_S-ADDR_WIDTH+1];
+		hit[x] <= ~table_wr && enable && codes[x][ENA_F_S] &&
+			codes[x][ADDR_S-:(ADDR_WIDTH-NO_ADDR_LSB)] == addr_in[ADDR_WIDTH-1:NO_ADDR_LSB] &&
+			(!codes[x][COMP_F_S] || (
+				wide  ? (data_in                  == codes[x][COMP_S-:DATA_WIDTH]) :
+				upper ? (data_in[DATA_WIDTH-1-:8] == codes[x][(COMP_S-DATA_WIDTH+1)+:8])
+				      : (data_in[7:0]             == codes[x][(COMP_S-DATA_WIDTH+1)+:8])));
+	end
+end
+
+// The walk lets every match overwrite what the previous one wrote, so the
+// highest numbered code wins. Four runs of eight merged in order give the same
+// answer as one walk of thirty two, at a third of the depth.
 localparam NGRP  = 4;
 localparam GSZ   = MAX_CODES / NGRP;
 localparam NBYTE = DATA_WIDTH / 8;
 
 logic [DATA_WIDTH-1:0] grp_val [NGRP];
 logic [NBYTE-1:0]      grp_wr  [NGRP];
+logic [DATA_WIDTH-1:0] sub_val;
+logic [NBYTE-1:0]      sub_wr;
 
 always_comb begin
 	int g, x, b, i;
@@ -105,41 +127,37 @@ always_comb begin
 	for (g = 0; g < NGRP; g = g + 1) begin
 		grp_val[g] = '0;
 		grp_wr[g]  = '0;
-	end
-
-	if (enable) begin
-		for (g = 0; g < NGRP; g = g + 1) begin
-			for (i = 0; i < GSZ; i = i + 1) begin
-				x = g * GSZ + i;
-				wide  = (DATA_WIDTH == 8) || !codes[x][CODE_WIDTH];
-				upper = codes[x][ADDR_S-ADDR_WIDTH+1];
-				if (codes[x][ENA_F_S] && codes[x][ADDR_S-:(ADDR_WIDTH-NO_ADDR_LSB)] == addr_in[ADDR_WIDTH-1:NO_ADDR_LSB]) begin
-					if (!codes[x][COMP_F_S] || (
-						wide  ? (data_in                == codes[x][COMP_S-:DATA_WIDTH]) :
-						upper ? (data_in[DATA_WIDTH-1-:8] == codes[x][(COMP_S-DATA_WIDTH+1)+:8])
-						      : (data_in[7:0]             == codes[x][(COMP_S-DATA_WIDTH+1)+:8])))
-					begin
-						if (wide) begin
-							grp_val[g] = codes[x][DATA_S-:DATA_WIDTH];
-							grp_wr[g]  = '1;
-						end
-						else if (upper) begin
-							grp_val[g][DATA_WIDTH-1-:8] = codes[x][(DATA_S-DATA_WIDTH+1)+:8];
-							grp_wr[g][NBYTE-1]          = 1'b1;
-						end
-						else begin
-							grp_val[g][7:0] = codes[x][(DATA_S-DATA_WIDTH+1)+:8];
-							grp_wr[g][0]    = 1'b1;
-						end
-					end
+		for (i = 0; i < GSZ; i = i + 1) begin
+			x = g * GSZ + i;
+			wide  = (DATA_WIDTH == 8) || !codes[x][CODE_WIDTH];
+			upper = codes[x][ADDR_S-ADDR_WIDTH+1];
+			if (hit[x]) begin
+				if (wide) begin
+					grp_val[g] = codes[x][DATA_S-:DATA_WIDTH];
+					grp_wr[g]  = '1;
+				end
+				else if (upper) begin
+					grp_val[g][DATA_WIDTH-1-:8] = codes[x][(DATA_S-DATA_WIDTH+1)+:8];
+					grp_wr[g][NBYTE-1]          = 1'b1;
+				end
+				else begin
+					grp_val[g][7:0] = codes[x][(DATA_S-DATA_WIDTH+1)+:8];
+					grp_wr[g][0]    = 1'b1;
 				end
 			end
 		end
 	end
 
-	data_out = data_in;
+	sub_val = '0;
+	sub_wr  = '0;
 	for (g = 0; g < NGRP; g = g + 1)
 		for (b = 0; b < NBYTE; b = b + 1)
-			if (grp_wr[g][b]) data_out[8*b +: 8] = grp_val[g][8*b +: 8];
+			if (grp_wr[g][b]) begin
+				sub_val[8*b +: 8] = grp_val[g][8*b +: 8];
+				sub_wr[b]         = 1'b1;
+			end
+
+	for (b = 0; b < NBYTE; b = b + 1)
+		data_out[8*b +: 8] = sub_wr[b] ? sub_val[8*b +: 8] : data_in[8*b +: 8];
 end
 endmodule

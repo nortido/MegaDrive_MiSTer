@@ -1,6 +1,7 @@
 // equivalence bench for the cheat code lookup: the rewrite has to answer the
-// same as the original for every code set and every bus word, or a game genie
-// code silently changes what a game reads.
+// same as the original for every code set and every bus word held for a clock,
+// and a table write must never make it answer something the original cannot,
+// or a game genie code silently changes what a game reads.
 `timescale 1ns/1ps
 module tb_codes;
 	reg clk = 0; always #5 clk = ~clk;
@@ -30,6 +31,25 @@ module tb_codes;
 		 .addr_in(a8), .data_in(d8), .data_out(q8_new));
 
 	integer i, j, bad, checks;
+
+	// while watch is set the bus is held still and the table changes under it: the
+	// output may lag the table by a clock, but it has to be the plain bus word or
+	// what the original answers, never a value neither of them gives
+	reg watch = 0;
+	integer lag = 0;
+	always @(negedge clk) if (watch) begin
+		#2;
+		checks = checks + 2;
+		if (q16_new !== q16_ref && q16_new !== d16) begin
+			if (bad < 5) $display("  16-bit table change: ref %h new %h bus %h", q16_ref, q16_new, d16);
+			bad = bad + 1;
+		end
+		if (q8_new !== q8_ref && q8_new !== d8) begin
+			if (bad < 5) $display("  8-bit table change: ref %h new %h bus %h", q8_ref, q8_new, d8);
+			bad = bad + 1;
+		end
+		if (q16_new !== q16_ref) lag = lag + 1;
+	end
 	reg [23:0] addrs [0:15];
 
 	task load_code(input [23:0] ad, input [15:0] cmp, input [15:0] rep,
@@ -77,6 +97,8 @@ module tb_codes;
 			a8  = a16[15:0];
 			d8  = d16[7:0];
 			enable = (i % 97 != 0);
+			// the match is registered, so hold the bus word for one clock first
+			@(posedge clk);
 			#1;
 			checks = checks + 2;
 			if (q16_ref !== q16_new) begin
@@ -90,8 +112,24 @@ module tb_codes;
 			@(negedge clk);
 		end
 
+		// a download starts by resetting the table while a code hits, then the same
+		// address comes back, first as it was, then with a compare the bus fails
+		a16 = addrs[0]; d16 = 16'h1234; a8 = a16[15:0]; d8 = d16[7:0]; enable = 1;
+		repeat (2) @(negedge clk);
+		watch = 1;
+		reset = 1;
+		@(negedge clk);
+		reset = 0;
+		repeat (3) @(negedge clk);
+		load_code(addrs[0], 16'h1234, 16'hA000, 1'b0, 1'b0);
+		repeat (3) @(negedge clk);
+		load_code(addrs[0], 16'h5555, 16'h2222, 1'b1, 1'b1);
+		repeat (3) @(negedge clk);
+		watch = 0;
+		$display("table changes: the output lagged the table on %0d clocks", lag);
+
 		$display("comparisons: %0d, mismatches: %0d", checks, bad);
-		if (bad == 0) $display("RESULT: PASS - the rewritten lookup answers exactly as the original");
+		if (bad == 0) $display("RESULT: PASS - the rewritten lookup answers as the original");
 		else          $display("RESULT: FAIL - the rewritten lookup differs");
 		$finish;
 	end
