@@ -2235,7 +2235,6 @@ module ym7101
 	
 	// prescaler
 	
-	assign mclk_and1 = prescaler_dff2_l2 & ~prescaler_dff1_l2;
 	
 	assign mclk_clk1 = prescaler_dff4_l2;
 	
@@ -2249,7 +2248,6 @@ module ym7101
 	
 	assign mclk_sbcr = PAL ? mclk_clk4 : mclk_clk5;
 	
-	assign mclk_cpu_clk0 = reg_test1[0] ? CLK1_i : mclk_clk5;
 	
 	assign mclk_dclk = (reg_rs0 | reg_test1[0]) ? EDCLK_i : (reg_rs1 ? mclk_clk1 : mclk_clk2);
 	//assign mclk_dclk = reg_rs1 ? mclk_clk1 : mclk_clk2;
@@ -2293,7 +2291,6 @@ module ym7101
 	
 	reg mclk_clk3_l = 0;
 	
-	assign mclk_cpu_clk1 = ~(mclk_clk3 | mclk_clk3_l);
 	
 	always @(posedge MCLK)
 	begin
@@ -2312,8 +2309,40 @@ end
 	ym7101_dff prescaler_dff1(.MCLK(MCLK), .clk(MCLK_e), .inp(reset_comb), .rst(1'h0), .outp(prescaler_dff1_l2), .ss_en(ss_en), .ss_in(mclk_clk3_l), .ss_out(ss_step2_prescaler_dff1));
 	wire ss_step3_prescaler_dff2;
 	ym7101_dff prescaler_dff2(.MCLK(MCLK), .clk(MCLK_e), .inp(prescaler_dff1_l2), .rst(1'h0), .outp(prescaler_dff2_l2), .ss_en(ss_en), .ss_in(ss_step2_prescaler_dff1), .ss_out(ss_step3_prescaler_dff2));
+	// registered: the next value of dff2 & ~dff1, so it matches the old wire on every
+	// clock and every divider starts from a register instead of a look-up table
+	reg mclk_and1_r = 0;
+	assign mclk_and1 = mclk_and1_r;
+	wire mclk_and1_next = MCLK_e ? (prescaler_dff2_l2 & ~prescaler_dff1_l2) : (prescaler_dff1_l2 & ~reset_comb);
+	always @(posedge MCLK)
+		if (ss_en)
+			mclk_and1_r <= ss_step3_prescaler_dff2;
+		else
+			mclk_and1_r <= mclk_and1_next;
+
+	// the two cpu clocks the same way, from the next values of the dividers that
+	// make them. CLK1_i is CLK1_o on this board, since the test pins keep CLK_d low
+	wire mclk_clk2_next = ~mclk_and1_next & (MCLK_e ? prescaler_dff7_l2 : ~mclk_and1_r & ~(prescaler_dff5_l2 & prescaler_dff6_l2));
+	wire dff16_next = ~mclk_and1_next & (mclk_clk2_next ? ~mclk_and1_r & (prescaler_dff7_l2 ? prescaler_dff16_l2 : prescaler_dff15_l2) : prescaler_dff16_l2);
+	wire dff17_next = ~mclk_and1_next & (~mclk_clk2_next ? ~mclk_and1_r & (~prescaler_dff7_l2 ? prescaler_dff17_l2 : prescaler_dff16_l2) : prescaler_dff17_l2);
+	wire cpu_clk1_next = prescaler_dff11_l2 & ~mclk_and1_next & (MCLK_e | (~mclk_and1_r & prescaler_dff10_l2));
+	wire cpu_clk0_next = (reset_ext ? 1'b0 : (w85 ? io_data[0] : reg_test1[0])) ? cpu_clk1_next : (dff16_next | dff17_next);
+	reg cpu_clk1_r = 0, cpu_clk0_r = 0;
+	assign mclk_cpu_clk1 = cpu_clk1_r;
+	assign mclk_cpu_clk0 = cpu_clk0_r;
+	always @(posedge MCLK)
+		if (ss_en)
+		begin
+			cpu_clk1_r <= mclk_and1_r;
+			cpu_clk0_r <= cpu_clk1_r;
+		end
+		else
+		begin
+			cpu_clk1_r <= cpu_clk1_next;
+			cpu_clk0_r <= cpu_clk0_next;
+		end
 	wire ss_step4_prescaler_dff3;
-	ym7101_dff prescaler_dff3(.MCLK(MCLK), .clk(MCLK_e), .inp(prescaler_dff4_l2), .rst(mclk_and1), .outp(prescaler_dff3_l2), .ss_en(ss_en), .ss_in(ss_step3_prescaler_dff2), .ss_out(ss_step4_prescaler_dff3));
+	ym7101_dff prescaler_dff3(.MCLK(MCLK), .clk(MCLK_e), .inp(prescaler_dff4_l2), .rst(mclk_and1), .outp(prescaler_dff3_l2), .ss_en(ss_en), .ss_in(cpu_clk0_r), .ss_out(ss_step4_prescaler_dff3));
 	wire ss_step5_prescaler_dff4;
 	ym7101_dff prescaler_dff4(.MCLK(MCLK), .clk(MCLK_e), .inp(~prescaler_dff3_l2), .rst(mclk_and1), .outp(prescaler_dff4_l2), .ss_en(ss_en), .ss_in(ss_step4_prescaler_dff3), .ss_out(ss_step5_prescaler_dff4));
 	wire ss_step6_prescaler_dff5;
@@ -2624,13 +2653,17 @@ end
 	assign w38 = reset_comb;
 	
 	wire ss_step55_dff13;
-	ym7101_dff dff13(.MCLK(MCLK), .clk(w34), .inp(w44), .rst(w38), .outp(dff13_l2), .ss_en(ss_en), .ss_in(ss_step54_dff12), .ss_out(ss_step55_dff13));
+	// dff13's clock without the loop through dff15's reset. it differs only when a
+	// refresh and a CPU access start on one clock, and then the refresh wins
+	wire dff15_nr;
+	wire w34_13 = w2 & cpu_as & (reset_comb | dff21_l2 | ~dff15_nr);
+	ym7101_dff dff13(.MCLK(MCLK), .clk(w34_13), .inp(w44), .rst(w38), .outp(dff13_l2), .ss_en(ss_en), .ss_in(ss_step54_dff12), .ss_out(ss_step55_dff13));
 	
 	wire ss_step56_dff14;
 	ym7101_dff dff14(.MCLK(MCLK), .clk(cpu_clk1), .inp(w43), .rst(1'h0), .outp(dff14_l2), .ss_en(ss_en), .ss_in(ss_step55_dff13), .ss_out(ss_step56_dff14));
 	
 	wire ss_step57_dff15;
-	ym7101_dff dff15(.MCLK(MCLK), .clk(dff14_l2), .inp(w44), .rst(w31), .outp(dff15_l2), .ss_en(ss_en), .ss_in(ss_step56_dff14), .ss_out(ss_step57_dff15));
+	ym7101_dff dff15(.MCLK(MCLK), .clk(dff14_l2), .inp(w44), .rst(w31), .outp(dff15_l2), .outp_nr(dff15_nr), .ss_en(ss_en), .ss_in(ss_step56_dff14), .ss_out(ss_step57_dff15));
 	
 	assign w39 = ~dff15_l2;
 	
@@ -8292,6 +8325,7 @@ endmodule*/
 
 module ym7101_dff #(parameter DATA_WIDTH = 1)
 	(
+	output [DATA_WIDTH-1:0] outp_nr,
 	input ss_en,
 	input ss_in,
 	output ss_out,
@@ -8308,6 +8342,7 @@ module ym7101_dff #(parameter DATA_WIDTH = 1)
 	wire [DATA_WIDTH-1:0] l2_assign = rst ? {DATA_WIDTH{1'h0}} : (clk ? l1 : l2);
 	
 	assign outp = ss_en ? l2 : l2_assign;
+	assign outp_nr = ss_en ? l2 : (clk ? l1 : l2);
 	//assign outp = l2;
 	
 	always @(posedge MCLK)
