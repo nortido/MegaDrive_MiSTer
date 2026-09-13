@@ -377,6 +377,7 @@ always @(posedge clk_sys) begin
 end
 
 reg vclk_en, zclk_en, clk_en;
+reg vclk_r = 0, zclk_r = 0;
 always @(posedge clk_md) begin
 	reg old_vclk, old_zclk;
 	
@@ -387,6 +388,9 @@ always @(posedge clk_md) begin
 
 	old_zclk <= ZCLK;
 	if(old_zclk & ~ZCLK) zclk_en <= clk_en;
+
+	vclk_r <= VCLK_next & ((old_vclk & ~VCLK) ? clk_en : vclk_en);
+	zclk_r <= ZCLK_next & ((old_zclk & ~ZCLK) ? clk_en : zclk_en);
 end
 
 always @(posedge clk_md) begin
@@ -478,6 +482,7 @@ wire        dma_z80_ack;
 wire        res_z80;
 
 wire        VCLK, ZCLK;
+wire        VCLK_next, ZCLK_next;
 
 md_board md_board
 (
@@ -511,8 +516,10 @@ md_board md_board
 
 	.ext_VCLK_o(VCLK),
 	.ext_ZCLK_o(ZCLK),
-	.ext_VCLK_i(VCLK & vclk_en),
-	.ext_ZCLK_i(ZCLK & zclk_en),
+	.ext_VCLK_next(VCLK_next),
+	.ext_ZCLK_next(ZCLK_next),
+	.ext_VCLK_i(vclk_r),
+	.ext_ZCLK_i(zclk_r),
 
 	// cart
 	.M3(~cart_ms),
