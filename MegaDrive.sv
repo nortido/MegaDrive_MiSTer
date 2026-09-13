@@ -138,7 +138,7 @@ localparam CONF_STR = {
 
 ///////////////////////////////////////////////////
 
-wire clk_53m, clk_107m, pll_locked;
+wire clk_53m, clk_107m, clk_107m_v, pll_locked;
 
 pll pll
 (
@@ -146,6 +146,7 @@ pll pll
 	.rst(0),
 	.outclk_0(clk_53m),
 	.outclk_1(clk_107m),
+	.outclk_2(clk_107m_v),
 	.reconfig_to_pll(reconfig_to_pll),
 	.reconfig_from_pll(reconfig_from_pll),
 	.locked(pll_locked)
@@ -211,7 +212,7 @@ end
 wire clk_sys     = clk_53m;
 wire clk_ram     = clk_107m;
 wire clk_md      = clk_107m;
-assign CLK_VIDEO = clk_107m;
+assign CLK_VIDEO = clk_107m_v;
 
 ///////////////////////////////////////////////////
 
