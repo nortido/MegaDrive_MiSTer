@@ -1,7 +1,5 @@
-// equivalence bench for the cheat code lookup: the rewrite has to answer the
-// same as the original for every code set and every bus word held for a clock,
-// and a table write must never make it answer something the original cannot,
-// or a game genie code silently changes what a game reads.
+// equivalence bench: the rewritten cheat code lookup must answer the same as
+// CODES_ref for every code set and bus word, or a code silently changes what a game reads
 `timescale 1ns/1ps
 module tb_codes;
 	reg clk = 0; always #5 clk = ~clk;
@@ -32,9 +30,8 @@ module tb_codes;
 
 	integer i, j, bad, checks;
 
-	// while watch is set the bus is held still and the table changes under it: the
-	// output may lag the table by a clock, but it has to be the plain bus word or
-	// what the original answers, never a value neither of them gives
+	// watch: table changes under a held bus. output may lag by a clock, but must
+	// be the bus word or the reference answer, never a third value.
 	reg watch = 0;
 	integer lag = 0;
 	always @(negedge clk) if (watch) begin
@@ -76,12 +73,9 @@ module tb_codes;
 		reset = 0;
 		repeat (4) @(negedge clk);
 
-		// a spread of codes: byte and word width, with and without the compare
-		// flag. the loader replaces a code that repeats an address, so a collision
-		// needs two different addresses landing on one byte: for sixteen bit reads
-		// the low address bit is dropped, so a word code at an even address and a
-		// byte code at the odd one above it both write the same half. the later
-		// code has to win, which is what the ordered walk used to guarantee.
+		// byte and word codes, with and without compare; a word code at an even
+		// address and a byte code at the odd one above it collide on one 16-bit
+		// half, and the later code has to win the lookup.
 		for (i = 0; i < 8; i = i + 1) begin
 			addrs[i] = 24'h100000 + i * 24'h10;
 			load_code(addrs[i], 16'h1234 + i, 16'hA000 + i, i[0], i[1]);

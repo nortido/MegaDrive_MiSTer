@@ -1,15 +1,10 @@
-// Cheat Code handling by Kitrinx
-// Apr 21, 2019
-
-// Code layout:
-// {clock bit, code flags,     32'b address, 32'b compare, 32'b replace}
-//  128        127:96          95:64         63:32         31:0
-// Integer values are in BIG endian byte order, so it up to the loader
-// or generator of the code to re-arrange them correctly.
+// cheat code reference model by Kitrinx. code layout:
+// {clock bit, flags, address, compare, replace} = {128, 127:96, 95:64, 63:32, 31:0}
+// values are big endian; the loader/generator must arrange them that way
 
 module CODES_ref #(parameter ADDR_WIDTH = 16, DATA_WIDTH = 8, MAX_CODES = 32, BIG_ENDIAN = 0) (
-	input  clk,        // Best to not make it too high speed for timing reasons
-	input  reset,      // This should only be triggered when a new rom is loaded or before new codes load, not warm reset
+	input  clk,        
+	input  reset,      // only on a new rom or before new codes load, not warm reset
 	input  enable,
 	output available,
 	input  [128:0] code,
